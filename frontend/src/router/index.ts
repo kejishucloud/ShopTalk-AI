@@ -14,6 +14,7 @@ const ModelManager = () => import('@/views/ModelManager.vue')
 const KnowledgeQuery = () => import('@/views/KnowledgeQuery.vue')
 const PlatformManager = () => import('@/views/PlatformManager.vue')
 const Analytics = () => import('@/views/Analytics.vue')
+const SystemConfig = () => import('@/views/SystemConfig.vue')
 
 const routes = [
   {
@@ -86,6 +87,12 @@ const routes = [
         name: 'Analytics',
         component: Analytics,
         meta: { title: '运营监控', icon: 'DataAnalysis' }
+      },
+      {
+        path: '/system-config',
+        name: 'SystemConfig',
+        component: SystemConfig,
+        meta: { title: '系统配置', icon: 'Setting' }
       }
     ]
   }
