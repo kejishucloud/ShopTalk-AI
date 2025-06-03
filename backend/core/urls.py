@@ -49,6 +49,9 @@ urlpatterns = [
         
         # AI模型管理模块
         path('ai-models/', include('apps.ai_models.urls')),
+        
+        # 系统配置管理模块
+        path('system-config/', include('apps.system_config.urls')),
     ])),
 ]
 

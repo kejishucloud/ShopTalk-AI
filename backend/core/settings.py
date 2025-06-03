@@ -48,6 +48,7 @@ LOCAL_APPS = [
     'apps.keywords',       # 关键词管理
     'apps.history',        # 历史聊天记录管理
     'apps.ai_models',      # AI模型管理
+    'apps.system_config',  # 系统配置管理
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
