@@ -34,13 +34,19 @@ class KnowledgeBase(models.Model):
     enable_ai_enhancement = models.BooleanField('启用AI增强', default=True)
     auto_extract_keywords = models.BooleanField('自动提取关键词', default=True)
     
+    # RAGFlow集成配置
+    ragflow_dataset_id = models.CharField('RAGFlow数据集ID', max_length=100, blank=True)
+    ragflow_kb_id = models.CharField('RAGFlow知识库ID', max_length=100, blank=True)
+    embedding_model = models.CharField('向量化模型', max_length=100, default='BAAI/bge-large-zh-v1.5')
+    chunk_method = models.CharField('分块方法', max_length=50, default='intelligent')
+    ragflow_config = models.JSONField('RAGFlow配置', default=dict, blank=True)
+    
     # 统计信息
     total_documents = models.IntegerField('文档总数', default=0)
     total_qa_pairs = models.IntegerField('问答对总数', default=0)
     total_views = models.IntegerField('总访问次数', default=0)
     
     # 配置信息
-    embedding_model = models.CharField('向量化模型', max_length=100, blank=True)
     search_config = models.JSONField('搜索配置', default=dict, blank=True)
     permissions = models.JSONField('权限配置', default=dict, blank=True)
     
@@ -62,6 +68,12 @@ class KnowledgeBase(models.Model):
     
     def get_qa_count(self):
         return self.faqs.filter(is_active=True).count()
+    
+    def get_script_count(self):
+        return self.scripts.filter(status='active').count()
+    
+    def get_product_count(self):
+        return self.products.filter(status='active').count()
 
 
 class DocumentCategory(models.Model):
@@ -332,6 +344,12 @@ class Product(models.Model):
     meta_description = models.TextField('SEO描述', blank=True)
     meta_keywords = models.CharField('SEO关键词', max_length=500, blank=True)
     
+    # RAGFlow集成字段
+    ragflow_document_id = models.CharField('RAGFlow文档ID', max_length=100, blank=True)
+    ragflow_chunk_ids = models.JSONField('RAGFlow块ID列表', default=list, blank=True)
+    vector_synced = models.BooleanField('向量已同步', default=False)
+    last_sync_time = models.DateTimeField('最后同步时间', null=True, blank=True)
+    
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
     updated_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='updated_products', null=True, blank=True)
     created_at = models.DateTimeField('创建时间', auto_now_add=True)
@@ -348,6 +366,7 @@ class Product(models.Model):
             models.Index(fields=['status']),
             models.Index(fields=['price']),
             models.Index(fields=['stock_quantity']),
+            models.Index(fields=['vector_synced']),
         ]
         ordering = ['-created_at']
     
@@ -363,6 +382,45 @@ class Product(models.Model):
         if self.original_price and self.original_price > self.price:
             return ((self.original_price - self.price) / self.original_price) * 100
         return 0
+    
+    def mark_vector_synced(self):
+        """标记向量已同步"""
+        self.vector_synced = True
+        self.last_sync_time = timezone.now()
+        self.save(update_fields=['vector_synced', 'last_sync_time'])
+    
+    def needs_sync(self):
+        """检查是否需要同步"""
+        if not self.vector_synced:
+            return True
+        return self.updated_at > self.last_sync_time if self.last_sync_time else True
+    
+    def get_text_for_vectorization(self):
+        """获取用于向量化的文本内容"""
+        text_parts = [
+            f"商品名称: {self.name}",
+            f"商品SKU: {self.sku}",
+            f"品牌: {self.brand}" if self.brand else "",
+            f"分类: {self.product_category}" if self.product_category else "",
+            f"价格: {self.price}",
+            f"描述: {self.description}" if self.description else "",
+            f"简短描述: {self.short_description}" if self.short_description else "",
+        ]
+        
+        # 添加卖点
+        if self.sales_points:
+            text_parts.append(f"卖点: {', '.join(self.sales_points)}")
+        
+        # 添加关键词
+        if self.keywords:
+            text_parts.append(f"关键词: {', '.join(self.keywords)}")
+        
+        # 添加规格参数
+        if self.specifications:
+            specs_text = ', '.join([f"{k}: {v}" for k, v in self.specifications.items()])
+            text_parts.append(f"规格参数: {specs_text}")
+        
+        return '\n'.join(filter(None, text_parts))
 
 
 class Script(models.Model):
@@ -392,6 +450,12 @@ class Script(models.Model):
     name = models.CharField('话术名称', max_length=100)
     script_type = models.CharField('话术类型', max_length=20, choices=ScriptType.choices)
     content = models.TextField('话术内容')
+    
+    # RAGFlow集成字段
+    ragflow_document_id = models.CharField('RAGFlow文档ID', max_length=100, blank=True)
+    ragflow_chunk_ids = models.JSONField('RAGFlow块ID列表', default=list, blank=True)
+    vector_synced = models.BooleanField('向量已同步', default=False)
+    last_sync_time = models.DateTimeField('最后同步时间', null=True, blank=True)
     
     # 模板变量
     variables = models.JSONField('变量定义', default=dict, blank=True)
@@ -430,6 +494,7 @@ class Script(models.Model):
             models.Index(fields=['priority']),
             models.Index(fields=['is_active']),
             models.Index(fields=['usage_count']),
+            models.Index(fields=['vector_synced']),
         ]
         ordering = ['-priority', '-usage_count']
     
@@ -439,6 +504,42 @@ class Script(models.Model):
     def increment_usage(self):
         self.usage_count += 1
         self.save(update_fields=['usage_count'])
+    
+    def mark_vector_synced(self):
+        """标记向量已同步"""
+        self.vector_synced = True
+        self.last_sync_time = timezone.now()
+        self.save(update_fields=['vector_synced', 'last_sync_time'])
+    
+    def needs_sync(self):
+        """检查是否需要同步"""
+        if not self.vector_synced:
+            return True
+        return self.updated_at > self.last_sync_time if self.last_sync_time else True
+    
+    def get_text_for_vectorization(self):
+        """获取用于向量化的文本内容"""
+        text_parts = [
+            f"话术名称: {self.name}",
+            f"话术类型: {self.get_script_type_display()}",
+            f"话术内容: {self.content}",
+        ]
+        
+        # 添加变量定义
+        if self.variables:
+            vars_text = ', '.join([f"{k}: {v}" for k, v in self.variables.items()])
+            text_parts.append(f"变量定义: {vars_text}")
+        
+        # 添加使用条件
+        if self.conditions:
+            conditions_text = ', '.join([f"{k}: {v}" for k, v in self.conditions.items()])
+            text_parts.append(f"使用条件: {conditions_text}")
+        
+        # 添加触发条件
+        if self.triggers:
+            text_parts.append(f"触发条件: {', '.join(self.triggers)}")
+            
+        return '\n'.join(filter(None, text_parts))
 
 
 class KnowledgeVector(models.Model):

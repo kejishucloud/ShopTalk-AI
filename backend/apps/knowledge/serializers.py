@@ -1,6 +1,5 @@
 """
-知识库管理序列化器
-提供API数据序列化和反序列化功能
+知识库序列化器 - 专注于话术和产品知识库
 """
 
 from rest_framework import serializers
@@ -391,4 +390,77 @@ class KnowledgeAnalyticsSerializer(serializers.Serializer):
         child=serializers.CharField(),
         required=False,
         help_text="指标列表"
-    ) 
+    )
+
+
+class ScriptSimpleSerializer(serializers.ModelSerializer):
+    """简化的话术序列化器（用于列表显示）"""
+    
+    script_type_display = serializers.CharField(source='get_script_type_display', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    sync_status = serializers.CharField(source='vector_synced', read_only=True)
+    
+    class Meta:
+        model = Script
+        fields = [
+            'id', 'name', 'script_type', 'script_type_display',
+            'status', 'status_display', 'priority', 'usage_count',
+            'sync_status', 'created_at', 'updated_at'
+        ]
+
+
+class ProductSimpleSerializer(serializers.ModelSerializer):
+    """简化的产品序列化器（用于列表显示）"""
+    
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    is_in_stock = serializers.BooleanField(read_only=True)
+    sync_status = serializers.CharField(source='vector_synced', read_only=True)
+    
+    class Meta:
+        model = Product
+        fields = [
+            'id', 'sku', 'name', 'brand', 'price', 'stock_quantity',
+            'is_in_stock', 'status', 'status_display', 'sync_status',
+            'created_at', 'updated_at'
+        ]
+
+
+class ImportResultSerializer(serializers.Serializer):
+    """导入结果序列化器"""
+    
+    success = serializers.BooleanField()
+    total_rows = serializers.IntegerField()
+    valid_rows = serializers.IntegerField()
+    success_count = serializers.IntegerField()
+    failed_count = serializers.IntegerField()
+    errors = serializers.ListField(child=serializers.CharField())
+    warnings = serializers.ListField(child=serializers.CharField())
+
+
+class SyncStatusSerializer(serializers.Serializer):
+    """同步状态序列化器"""
+    
+    knowledge_base = serializers.DictField()
+    scripts = serializers.DictField()
+    products = serializers.DictField()
+    last_sync_time = serializers.DateTimeField()
+
+
+class SearchRequestSerializer(serializers.Serializer):
+    """搜索请求序列化器"""
+    
+    query = serializers.CharField(max_length=500, help_text="搜索查询")
+    top_k = serializers.IntegerField(default=10, min_value=1, max_value=50, help_text="返回结果数量")
+    content_types = serializers.ListField(
+        child=serializers.ChoiceField(choices=['script', 'product']),
+        required=False,
+        help_text="内容类型过滤"
+    )
+
+
+class SearchResultSerializer(serializers.Serializer):
+    """搜索结果序列化器"""
+    
+    query = serializers.CharField()
+    results = serializers.ListField()
+    total = serializers.IntegerField() 

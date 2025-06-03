@@ -1,21 +1,18 @@
 """
-知识库同步服务
-用于定时或手动同步数据库中的数据到向量库和RAGFlow
+知识库同步服务 - 将数据同步到RAGFlow
 """
+
 import logging
-from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+import json
+from typing import Dict, List, Optional, Any
+from datetime import datetime
 from django.utils import timezone
 from django.db import transaction
+from django.db import models
 from celery import shared_task
 
-from .models import (
-    KnowledgeBase, Script, Product, Document, FAQ, 
-    KnowledgeVector
-)
-from .vector_services import KnowledgeVectorService
-from .ragflow_client import KnowledgeRAGFlowSync
-from .config import get_ragflow_config, is_ragflow_enabled
+from .models import KnowledgeBase, Script, Product, KnowledgeVector
+from .ragflow_client import ragflow_client, RAGFlowError
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +22,7 @@ class KnowledgeBaseSyncService:
     def __init__(self):
         self.vector_service = KnowledgeVectorService()
         self.ragflow_sync = KnowledgeRAGFlowSync()
+        self.client = ragflow_client
     
     def sync_all_knowledge_bases(self) -> Dict[str, int]:
         """同步所有知识库"""
@@ -524,4 +522,403 @@ def sync_single_content_task(self, kb_id, content_type, content_id):
         
     except Exception as e:
         logger.error(f"内容{content_type}_{content_id}同步任务失败: {e}")
-        raise 
+        raise
+
+class KnowledgeBaseSync:
+    """知识库同步服务"""
+    
+    def __init__(self):
+        self.client = ragflow_client
+    
+    def sync_knowledge_base_to_ragflow(self, kb: KnowledgeBase) -> bool:
+        """
+        将知识库同步到RAGFlow
+        
+        Args:
+            kb: 知识库实例
+            
+        Returns:
+            同步是否成功
+        """
+        try:
+            # 如果已有RAGFlow知识库ID，先检查是否存在
+            if kb.ragflow_kb_id:
+                logger.info(f"知识库 {kb.name} 已有RAGFlow ID: {kb.ragflow_kb_id}")
+                return True
+            
+            # 创建RAGFlow知识库
+            result = self.client.create_knowledge_base(
+                name=f"{kb.name}_{kb.id}",
+                description=kb.description,
+                embedding_model=kb.embedding_model,
+                chunk_method=kb.chunk_method
+            )
+            
+            # 保存RAGFlow知识库ID
+            if result and 'id' in result:
+                kb.ragflow_kb_id = result['id']
+                kb.save(update_fields=['ragflow_kb_id'])
+                logger.info(f"成功创建RAGFlow知识库: {kb.name} -> {result['id']}")
+                return True
+            else:
+                logger.error(f"创建RAGFlow知识库失败: {kb.name}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"同步知识库到RAGFlow失败: {e}")
+            return False
+    
+    def sync_script_to_ragflow(self, script: Script) -> bool:
+        """
+        将话术同步到RAGFlow
+        
+        Args:
+            script: 话术实例
+            
+        Returns:
+            同步是否成功
+        """
+        try:
+            # 确保知识库已同步
+            if not script.knowledge_base.ragflow_kb_id:
+                if not self.sync_knowledge_base_to_ragflow(script.knowledge_base):
+                    return False
+            
+            # 准备文档内容
+            content = script.get_text_for_vectorization()
+            file_name = f"script_{script.id}_{script.name}.txt"
+            
+            # 上传到RAGFlow
+            result = self.client.upload_document(
+                kb_id=script.knowledge_base.ragflow_kb_id,
+                file_name=file_name,
+                file_content=content,
+                file_type="text"
+            )
+            
+            if result and 'id' in result:
+                # 保存RAGFlow文档ID
+                script.ragflow_document_id = result['id']
+                script.mark_vector_synced()
+                
+                logger.info(f"成功同步话术到RAGFlow: {script.name} -> {result['id']}")
+                return True
+            else:
+                logger.error(f"同步话术到RAGFlow失败: {script.name}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"同步话术到RAGFlow失败: {e}")
+            return False
+    
+    def sync_product_to_ragflow(self, product: Product) -> bool:
+        """
+        将产品同步到RAGFlow
+        
+        Args:
+            product: 产品实例
+            
+        Returns:
+            同步是否成功
+        """
+        try:
+            # 确保知识库已同步
+            if not product.knowledge_base.ragflow_kb_id:
+                if not self.sync_knowledge_base_to_ragflow(product.knowledge_base):
+                    return False
+            
+            # 准备文档内容
+            content = product.get_text_for_vectorization()
+            file_name = f"product_{product.id}_{product.sku}.txt"
+            
+            # 上传到RAGFlow
+            result = self.client.upload_document(
+                kb_id=product.knowledge_base.ragflow_kb_id,
+                file_name=file_name,
+                file_content=content,
+                file_type="text"
+            )
+            
+            if result and 'id' in result:
+                # 保存RAGFlow文档ID
+                product.ragflow_document_id = result['id']
+                product.mark_vector_synced()
+                
+                logger.info(f"成功同步产品到RAGFlow: {product.name} -> {result['id']}")
+                return True
+            else:
+                logger.error(f"同步产品到RAGFlow失败: {product.name}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"同步产品到RAGFlow失败: {e}")
+            return False
+    
+    def batch_sync_scripts(self, knowledge_base_id: int, limit: int = 50) -> Dict[str, int]:
+        """
+        批量同步话术
+        
+        Args:
+            knowledge_base_id: 知识库ID
+            limit: 每次同步的数量限制
+            
+        Returns:
+            同步结果统计
+        """
+        try:
+            kb = KnowledgeBase.objects.get(id=knowledge_base_id)
+            
+            # 获取需要同步的话术
+            scripts = Script.objects.filter(
+                knowledge_base=kb,
+                status='active'
+            ).filter(
+                models.Q(vector_synced=False) | 
+                models.Q(updated_at__gt=models.F('last_sync_time'))
+            )[:limit]
+            
+            success_count = 0
+            failed_count = 0
+            
+            for script in scripts:
+                if self.sync_script_to_ragflow(script):
+                    success_count += 1
+                else:
+                    failed_count += 1
+            
+            logger.info(f"批量同步话术完成: 成功 {success_count}, 失败 {failed_count}")
+            
+            return {
+                'success': success_count,
+                'failed': failed_count,
+                'total': success_count + failed_count
+            }
+            
+        except Exception as e:
+            logger.error(f"批量同步话术失败: {e}")
+            return {'success': 0, 'failed': 0, 'total': 0}
+    
+    def batch_sync_products(self, knowledge_base_id: int, limit: int = 50) -> Dict[str, int]:
+        """
+        批量同步产品
+        
+        Args:
+            knowledge_base_id: 知识库ID
+            limit: 每次同步的数量限制
+            
+        Returns:
+            同步结果统计
+        """
+        try:
+            kb = KnowledgeBase.objects.get(id=knowledge_base_id)
+            
+            # 获取需要同步的产品
+            products = Product.objects.filter(
+                knowledge_base=kb,
+                status='active'
+            ).filter(
+                models.Q(vector_synced=False) | 
+                models.Q(updated_at__gt=models.F('last_sync_time'))
+            )[:limit]
+            
+            success_count = 0
+            failed_count = 0
+            
+            for product in products:
+                if self.sync_product_to_ragflow(product):
+                    success_count += 1
+                else:
+                    failed_count += 1
+            
+            logger.info(f"批量同步产品完成: 成功 {success_count}, 失败 {failed_count}")
+            
+            return {
+                'success': success_count,
+                'failed': failed_count,
+                'total': success_count + failed_count
+            }
+            
+        except Exception as e:
+            logger.error(f"批量同步产品失败: {e}")
+            return {'success': 0, 'failed': 0, 'total': 0}
+    
+    def search_ragflow(self, knowledge_base_id: int, query: str, top_k: int = 10) -> List[Dict]:
+        """
+        在RAGFlow中搜索知识
+        
+        Args:
+            knowledge_base_id: 知识库ID
+            query: 查询文本
+            top_k: 返回结果数量
+            
+        Returns:
+            搜索结果列表
+        """
+        try:
+            kb = KnowledgeBase.objects.get(id=knowledge_base_id)
+            
+            if not kb.ragflow_kb_id:
+                logger.warning(f"知识库 {kb.name} 未同步到RAGFlow")
+                return []
+            
+            # 在RAGFlow中搜索
+            results = self.client.get_retrieval_result(
+                kb_id=kb.ragflow_kb_id,
+                query=query,
+                top_k=top_k
+            )
+            
+            return results
+            
+        except Exception as e:
+            logger.error(f"RAGFlow搜索失败: {e}")
+            return []
+    
+    def delete_from_ragflow(self, ragflow_kb_id: str, ragflow_doc_id: str) -> bool:
+        """
+        从RAGFlow删除文档
+        
+        Args:
+            ragflow_kb_id: RAGFlow知识库ID
+            ragflow_doc_id: RAGFlow文档ID
+            
+        Returns:
+            删除是否成功
+        """
+        try:
+            return self.client.delete_document(ragflow_kb_id, ragflow_doc_id)
+        except Exception as e:
+            logger.error(f"从RAGFlow删除文档失败: {e}")
+            return False
+    
+    def get_sync_status(self, knowledge_base_id: int) -> Dict[str, Any]:
+        """
+        获取知识库同步状态
+        
+        Args:
+            knowledge_base_id: 知识库ID
+            
+        Returns:
+            同步状态信息
+        """
+        try:
+            kb = KnowledgeBase.objects.get(id=knowledge_base_id)
+            
+            # 统计话术同步状态
+            total_scripts = Script.objects.filter(knowledge_base=kb, status='active').count()
+            synced_scripts = Script.objects.filter(
+                knowledge_base=kb, 
+                status='active',
+                vector_synced=True
+            ).count()
+            
+            # 统计产品同步状态
+            total_products = Product.objects.filter(knowledge_base=kb, status='active').count()
+            synced_products = Product.objects.filter(
+                knowledge_base=kb,
+                status='active', 
+                vector_synced=True
+            ).count()
+            
+            return {
+                'knowledge_base': {
+                    'id': kb.id,
+                    'name': kb.name,
+                    'ragflow_kb_id': kb.ragflow_kb_id,
+                    'ragflow_synced': bool(kb.ragflow_kb_id)
+                },
+                'scripts': {
+                    'total': total_scripts,
+                    'synced': synced_scripts,
+                    'pending': total_scripts - synced_scripts,
+                    'sync_rate': (synced_scripts / total_scripts * 100) if total_scripts > 0 else 0
+                },
+                'products': {
+                    'total': total_products,
+                    'synced': synced_products,
+                    'pending': total_products - synced_products,
+                    'sync_rate': (synced_products / total_products * 100) if total_products > 0 else 0
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"获取同步状态失败: {e}")
+            return {}
+
+# 创建全局同步服务实例
+kb_sync_service = KnowledgeBaseSync()
+
+# Celery任务
+@shared_task(bind=True, max_retries=3)
+def sync_knowledge_base_task(self, kb_id: int):
+    """异步同步知识库任务"""
+    try:
+        kb = KnowledgeBase.objects.get(id=kb_id)
+        success = kb_sync_service.sync_knowledge_base_to_ragflow(kb)
+        
+        if success:
+            logger.info(f"知识库同步任务完成: {kb.name}")
+            return {"status": "success", "kb_id": kb_id}
+        else:
+            raise Exception("同步失败")
+            
+    except Exception as e:
+        logger.error(f"知识库同步任务失败: {e}")
+        raise self.retry(countdown=60 * (self.request.retries + 1))
+
+@shared_task(bind=True, max_retries=3)
+def sync_script_task(self, script_id: int):
+    """异步同步话术任务"""
+    try:
+        script = Script.objects.get(id=script_id)
+        success = kb_sync_service.sync_script_to_ragflow(script)
+        
+        if success:
+            logger.info(f"话术同步任务完成: {script.name}")
+            return {"status": "success", "script_id": script_id}
+        else:
+            raise Exception("同步失败")
+            
+    except Exception as e:
+        logger.error(f"话术同步任务失败: {e}")
+        raise self.retry(countdown=60 * (self.request.retries + 1))
+
+@shared_task(bind=True, max_retries=3)
+def sync_product_task(self, product_id: int):
+    """异步同步产品任务"""
+    try:
+        product = Product.objects.get(id=product_id)
+        success = kb_sync_service.sync_product_to_ragflow(product)
+        
+        if success:
+            logger.info(f"产品同步任务完成: {product.name}")
+            return {"status": "success", "product_id": product_id}
+        else:
+            raise Exception("同步失败")
+            
+    except Exception as e:
+        logger.error(f"产品同步任务失败: {e}")
+        raise self.retry(countdown=60 * (self.request.retries + 1))
+
+@shared_task
+def batch_sync_knowledge_base_task(kb_id: int):
+    """批量同步知识库内容任务"""
+    try:
+        # 同步话术
+        script_result = kb_sync_service.batch_sync_scripts(kb_id, limit=100)
+        
+        # 同步产品
+        product_result = kb_sync_service.batch_sync_products(kb_id, limit=100)
+        
+        logger.info(f"批量同步完成 - 话术: {script_result}, 产品: {product_result}")
+        
+        return {
+            "status": "success",
+            "kb_id": kb_id,
+            "scripts": script_result,
+            "products": product_result
+        }
+        
+    except Exception as e:
+        logger.error(f"批量同步任务失败: {e}")
+        return {"status": "failed", "error": str(e)} 

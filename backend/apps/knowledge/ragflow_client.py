@@ -1,480 +1,303 @@
 """
-RAGFlow集成客户端
-用于与RAGFlow系统进行数据同步和集成
+RAGFlow客户端 - 与RAGFlow API交互
 """
-import json
-import logging
-import requests
-from typing import Dict, List, Optional, Any
-from datetime import datetime
-import time
 
-from .config import get_ragflow_config, is_ragflow_enabled
+import json
+import requests
+import logging
+from typing import Dict, List, Optional, Any, Union
+from django.conf import settings
+from django.core.files.base import ContentFile
+import io
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
-class RAGFlowClient:
-    """RAGFlow API客户端"""
-    
-    def __init__(self):
-        self.config = get_ragflow_config()
-        self.base_url = self.config['base_url'].rstrip('/')
-        self.api_key = self.config['api_key']
-        self.user_id = self.config['user_id']
-        self.session = requests.Session()
-        self.session.headers.update({
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {self.api_key}',
-            'User-Agent': 'ShopTalk-Knowledge-Sync/1.0'
-        })
-    
-    def test_connection(self) -> bool:
-        """测试RAGFlow连接"""
-        try:
-            response = self.session.get(f"{self.base_url}/api/v1/health")
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"RAGFlow连接测试失败: {e}")
-            return False
-    
-    def create_dataset(self, dataset_name: str, description: str = "") -> Optional[str]:
-        """创建RAGFlow数据集"""
-        try:
-            data = {
-                "name": f"{self.config['dataset_prefix']}{dataset_name}",
-                "description": description,
-                "language": "Chinese",
-                "embedding_model": "BAAI/bge-large-zh-v1.5",
-                "chunk_method": "manual",
-                "chunk_size": self.config['chunk_size'],
-                "chunk_overlap": self.config['chunk_overlap'],
-                "permission": "me"
-            }
-            
-            response = self.session.post(
-                f"{self.base_url}/api/v1/datasets",
-                json=data
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                dataset_id = result.get('data', {}).get('dataset_id')
-                logger.info(f"创建RAGFlow数据集成功: {dataset_name} -> {dataset_id}")
-                return dataset_id
-            else:
-                logger.error(f"创建RAGFlow数据集失败: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"创建RAGFlow数据集异常: {e}")
-            return None
-    
-    def get_dataset(self, dataset_name: str) -> Optional[str]:
-        """获取RAGFlow数据集"""
-        try:
-            full_name = f"{self.config['dataset_prefix']}{dataset_name}"
-            response = self.session.get(f"{self.base_url}/api/v1/datasets")
-            
-            if response.status_code == 200:
-                datasets = response.json().get('data', [])
-                for dataset in datasets:
-                    if dataset.get('name') == full_name:
-                        return dataset.get('dataset_id')
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"获取RAGFlow数据集异常: {e}")
-            return None
-    
-    def get_or_create_dataset(self, dataset_name: str, description: str = "") -> Optional[str]:
-        """获取或创建RAGFlow数据集"""
-        dataset_id = self.get_dataset(dataset_name)
-        if dataset_id:
-            return dataset_id
-        return self.create_dataset(dataset_name, description)
-    
-    def upload_document(self, dataset_id: str, title: str, content: str, 
-                       metadata: Dict = None) -> Optional[str]:
-        """上传文档到RAGFlow"""
-        try:
-            data = {
-                "dataset_id": dataset_id,
-                "name": title,
-                "type": "text",
-                "content": content,
-                "metadata": metadata or {},
-                "chunk_method": "manual",
-                "chunk_size": self.config['chunk_size'],
-                "chunk_overlap": self.config['chunk_overlap']
-            }
-            
-            response = self.session.post(
-                f"{self.base_url}/api/v1/documents",
-                json=data
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                document_id = result.get('data', {}).get('document_id')
-                logger.info(f"上传文档到RAGFlow成功: {title} -> {document_id}")
-                return document_id
-            else:
-                logger.error(f"上传文档到RAGFlow失败: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"上传文档到RAGFlow异常: {e}")
-            return None
-    
-    def update_document(self, document_id: str, title: str, content: str, 
-                       metadata: Dict = None) -> bool:
-        """更新RAGFlow文档"""
-        try:
-            data = {
-                "name": title,
-                "content": content,
-                "metadata": metadata or {}
-            }
-            
-            response = self.session.put(
-                f"{self.base_url}/api/v1/documents/{document_id}",
-                json=data
-            )
-            
-            if response.status_code == 200:
-                logger.info(f"更新RAGFlow文档成功: {document_id}")
-                return True
-            else:
-                logger.error(f"更新RAGFlow文档失败: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"更新RAGFlow文档异常: {e}")
-            return False
-    
-    def delete_document(self, document_id: str) -> bool:
-        """删除RAGFlow文档"""
-        try:
-            response = self.session.delete(f"{self.base_url}/api/v1/documents/{document_id}")
-            
-            if response.status_code == 200:
-                logger.info(f"删除RAGFlow文档成功: {document_id}")
-                return True
-            else:
-                logger.error(f"删除RAGFlow文档失败: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"删除RAGFlow文档异常: {e}")
-            return False
-    
-    def process_document(self, document_id: str) -> bool:
-        """处理RAGFlow文档（分块和向量化）"""
-        try:
-            response = self.session.post(
-                f"{self.base_url}/api/v1/documents/{document_id}/process"
-            )
-            
-            if response.status_code == 200:
-                logger.info(f"处理RAGFlow文档成功: {document_id}")
-                return True
-            else:
-                logger.error(f"处理RAGFlow文档失败: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"处理RAGFlow文档异常: {e}")
-            return False
-    
-    def get_document_status(self, document_id: str) -> Optional[str]:
-        """获取RAGFlow文档状态"""
-        try:
-            response = self.session.get(f"{self.base_url}/api/v1/documents/{document_id}")
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get('data', {}).get('status')
-            else:
-                logger.error(f"获取RAGFlow文档状态失败: {response.status_code}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"获取RAGFlow文档状态异常: {e}")
-            return None
-    
-    def wait_for_processing(self, document_id: str, timeout: int = 300) -> bool:
-        """等待RAGFlow文档处理完成"""
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            status = self.get_document_status(document_id)
-            
-            if status == 'completed':
-                return True
-            elif status == 'failed':
-                return False
-            
-            time.sleep(5)  # 等待5秒后重试
-        
-        logger.warning(f"RAGFlow文档处理超时: {document_id}")
-        return False
-    
-    def search_documents(self, dataset_id: str, query: str, top_k: int = 10) -> List[Dict]:
-        """在RAGFlow中搜索文档"""
-        try:
-            data = {
-                "dataset_id": dataset_id,
-                "question": query,
-                "top_k": top_k,
-                "similarity_threshold": 0.1
-            }
-            
-            response = self.session.post(
-                f"{self.base_url}/api/v1/retrieval",
-                json=data
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get('data', {}).get('chunks', [])
-            else:
-                logger.error(f"RAGFlow搜索失败: {response.status_code} - {response.text}")
-                return []
-                
-        except Exception as e:
-            logger.error(f"RAGFlow搜索异常: {e}")
-            return []
 
-class KnowledgeRAGFlowSync:
-    """知识库RAGFlow同步服务"""
+class RAGFlowError(Exception):
+    """RAGFlow API错误"""
+    pass
+
+
+class RAGFlowClient:
+    """RAGFlow客户端"""
     
-    def __init__(self):
-        self.client = RAGFlowClient() if is_ragflow_enabled() else None
-        self.dataset_mapping = {}  # 知识库ID到RAGFlow数据集ID的映射
-    
-    def sync_knowledge_base(self, kb_id: int, kb_name: str, kb_type: str) -> bool:
-        """同步知识库到RAGFlow"""
-        if not self.client:
-            logger.info("RAGFlow未启用，跳过同步")
-            return True
+    def __init__(self, api_url: str = None, api_key: str = None):
+        """
+        初始化RAGFlow客户端
+        
+        Args:
+            api_url: RAGFlow API地址
+            api_key: RAGFlow API密钥
+        """
+        self.api_url = api_url or getattr(settings, 'RAGFLOW_API_URL', 'http://localhost')
+        self.api_key = api_key or getattr(settings, 'RAGFLOW_API_KEY', '')
+        
+        # 设置默认headers
+        self.headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {self.api_key}' if self.api_key else '',
+        }
+        
+        # 设置超时时间
+        self.timeout = getattr(settings, 'RAGFLOW_TIMEOUT', 30)
+        
+    def _make_request(self, method: str, endpoint: str, data: Dict = None, 
+                     files: Dict = None, params: Dict = None) -> Dict:
+        """
+        发送HTTP请求
+        
+        Args:
+            method: HTTP方法
+            endpoint: API端点
+            data: 请求数据
+            files: 文件数据
+            params: URL参数
+            
+        Returns:
+            响应数据
+            
+        Raises:
+            RAGFlowError: API请求失败
+        """
+        url = f"{self.api_url.rstrip('/')}/api/v1/{endpoint.lstrip('/')}"
         
         try:
-            # 创建或获取数据集
-            dataset_name = f"{kb_type}_{kb_id}"
-            description = f"ShopTalk知识库: {kb_name} (类型: {kb_type})"
+            headers = self.headers.copy()
+            if files:
+                # 如果上传文件，不设置Content-Type，让requests自动设置
+                headers.pop('Content-Type', None)
             
-            dataset_id = self.client.get_or_create_dataset(dataset_name, description)
-            if not dataset_id:
-                return False
-            
-            self.dataset_mapping[kb_id] = dataset_id
-            logger.info(f"知识库同步成功: KB{kb_id} -> Dataset{dataset_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"同步知识库到RAGFlow失败: {e}")
-            return False
-    
-    def sync_script(self, kb_id: int, script_id: int, script_name: str, 
-                   script_type: str, content: str, metadata: Dict = None) -> bool:
-        """同步话术到RAGFlow"""
-        if not self.client:
-            return True
-        
-        try:
-            dataset_id = self.dataset_mapping.get(kb_id)
-            if not dataset_id:
-                logger.warning(f"知识库{kb_id}未同步到RAGFlow")
-                return False
-            
-            # 准备文档内容
-            title = f"话术_{script_type}_{script_name}"
-            doc_content = f"话术名称: {script_name}\n话术类型: {script_type}\n\n话术内容:\n{content}"
-            
-            # 准备元数据
-            doc_metadata = {
-                'content_type': 'script',
-                'content_id': script_id,
-                'script_type': script_type,
-                'script_name': script_name
-            }
-            if metadata:
-                doc_metadata.update(metadata)
-            
-            # 上传文档
-            document_id = self.client.upload_document(
-                dataset_id, title, doc_content, doc_metadata
+            response = requests.request(
+                method=method,
+                url=url,
+                json=data if not files else None,
+                files=files,
+                params=params,
+                headers=headers,
+                timeout=self.timeout
             )
             
-            if document_id:
-                # 处理文档
-                self.client.process_document(document_id)
-                logger.info(f"话术同步成功: {script_name} -> {document_id}")
-                return True
+            # 记录请求日志
+            logger.debug(f"RAGFlow {method} {url} - Status: {response.status_code}")
             
-            return False
+            if response.status_code >= 400:
+                error_msg = f"RAGFlow API error: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                raise RAGFlowError(error_msg)
             
-        except Exception as e:
-            logger.error(f"同步话术到RAGFlow失败: {e}")
-            return False
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            error_msg = f"RAGFlow API request failed: {str(e)}"
+            logger.error(error_msg)
+            raise RAGFlowError(error_msg)
     
-    def sync_product(self, kb_id: int, product_id: int, product_name: str, 
-                    description: str, specifications: Dict = None, 
-                    metadata: Dict = None) -> bool:
-        """同步产品到RAGFlow"""
-        if not self.client:
-            return True
-        
+    def get_knowledge_bases(self) -> List[Dict]:
+        """获取知识库列表"""
         try:
-            dataset_id = self.dataset_mapping.get(kb_id)
-            if not dataset_id:
-                logger.warning(f"知识库{kb_id}未同步到RAGFlow")
-                return False
-            
-            # 准备文档内容
-            title = f"产品_{product_name}"
-            doc_content = f"产品名称: {product_name}\n\n产品描述:\n{description}"
-            
-            # 添加规格信息
-            if specifications:
-                doc_content += "\n\n产品规格:\n"
-                for key, value in specifications.items():
-                    doc_content += f"- {key}: {value}\n"
-            
-            # 准备元数据
-            doc_metadata = {
-                'content_type': 'product',
-                'content_id': product_id,
-                'product_name': product_name
-            }
-            if metadata:
-                doc_metadata.update(metadata)
-            
-            # 上传文档
-            document_id = self.client.upload_document(
-                dataset_id, title, doc_content, doc_metadata
-            )
-            
-            if document_id:
-                # 处理文档
-                self.client.process_document(document_id)
-                logger.info(f"产品同步成功: {product_name} -> {document_id}")
-                return True
-            
-            return False
-            
+            return self._make_request('GET', 'knowledge_bases')
         except Exception as e:
-            logger.error(f"同步产品到RAGFlow失败: {e}")
-            return False
-    
-    def sync_document(self, kb_id: int, doc_id: int, title: str, content: str, 
-                     metadata: Dict = None) -> bool:
-        """同步文档到RAGFlow"""
-        if not self.client:
-            return True
-        
-        try:
-            dataset_id = self.dataset_mapping.get(kb_id)
-            if not dataset_id:
-                logger.warning(f"知识库{kb_id}未同步到RAGFlow")
-                return False
-            
-            # 准备元数据
-            doc_metadata = {
-                'content_type': 'document',
-                'content_id': doc_id
-            }
-            if metadata:
-                doc_metadata.update(metadata)
-            
-            # 上传文档
-            document_id = self.client.upload_document(
-                dataset_id, title, content, doc_metadata
-            )
-            
-            if document_id:
-                # 处理文档
-                self.client.process_document(document_id)
-                logger.info(f"文档同步成功: {title} -> {document_id}")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"同步文档到RAGFlow失败: {e}")
-            return False
-    
-    def sync_faq(self, kb_id: int, faq_id: int, question: str, answer: str, 
-                metadata: Dict = None) -> bool:
-        """同步FAQ到RAGFlow"""
-        if not self.client:
-            return True
-        
-        try:
-            dataset_id = self.dataset_mapping.get(kb_id)
-            if not dataset_id:
-                logger.warning(f"知识库{kb_id}未同步到RAGFlow")
-                return False
-            
-            # 准备文档内容
-            title = f"FAQ_{question[:50]}"
-            doc_content = f"问题: {question}\n\n答案: {answer}"
-            
-            # 准备元数据
-            doc_metadata = {
-                'content_type': 'faq',
-                'content_id': faq_id,
-                'question': question
-            }
-            if metadata:
-                doc_metadata.update(metadata)
-            
-            # 上传文档
-            document_id = self.client.upload_document(
-                dataset_id, title, doc_content, doc_metadata
-            )
-            
-            if document_id:
-                # 处理文档
-                self.client.process_document(document_id)
-                logger.info(f"FAQ同步成功: {question[:50]} -> {document_id}")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"同步FAQ到RAGFlow失败: {e}")
-            return False
-    
-    def search_ragflow(self, kb_id: int, query: str, top_k: int = 10) -> List[Dict]:
-        """在RAGFlow中搜索知识"""
-        if not self.client:
-            return []
-        
-        try:
-            dataset_id = self.dataset_mapping.get(kb_id)
-            if not dataset_id:
-                logger.warning(f"知识库{kb_id}未同步到RAGFlow")
-                return []
-            
-            return self.client.search_documents(dataset_id, query, top_k)
-            
-        except Exception as e:
-            logger.error(f"RAGFlow搜索失败: {e}")
+            logger.error(f"获取知识库列表失败: {e}")
             return []
     
-    def delete_from_ragflow(self, document_id: str) -> bool:
-        """从RAGFlow删除文档"""
-        if not self.client:
-            return True
+    def create_knowledge_base(self, name: str, description: str = "", 
+                            embedding_model: str = "BAAI/bge-large-zh-v1.5",
+                            chunk_method: str = "intelligent") -> Dict:
+        """
+        创建知识库
         
-        return self.client.delete_document(document_id)
+        Args:
+            name: 知识库名称
+            description: 描述
+            embedding_model: 向量化模型
+            chunk_method: 分块方法
+            
+        Returns:
+            创建的知识库信息
+        """
+        data = {
+            "name": name,
+            "description": description,
+            "embedding_model": embedding_model,
+            "chunk_method": chunk_method,
+            "language": "Chinese"
+        }
+        
+        try:
+            result = self._make_request('POST', 'knowledge_bases', data=data)
+            logger.info(f"成功创建RAGFlow知识库: {name}")
+            return result
+        except Exception as e:
+            logger.error(f"创建RAGFlow知识库失败: {e}")
+            raise
     
-    def get_dataset_id(self, kb_id: int) -> Optional[str]:
-        """获取知识库对应的RAGFlow数据集ID"""
-        return self.dataset_mapping.get(kb_id)
+    def delete_knowledge_base(self, kb_id: str) -> bool:
+        """删除知识库"""
+        try:
+            self._make_request('DELETE', f'knowledge_bases/{kb_id}')
+            logger.info(f"成功删除RAGFlow知识库: {kb_id}")
+            return True
+        except Exception as e:
+            logger.error(f"删除RAGFlow知识库失败: {e}")
+            return False
     
-    def load_dataset_mapping(self, mapping: Dict[int, str]):
-        """加载数据集映射"""
-        self.dataset_mapping.update(mapping) 
+    def upload_document(self, kb_id: str, file_name: str, file_content: Union[str, bytes],
+                       file_type: str = "text") -> Dict:
+        """
+        上传文档到知识库
+        
+        Args:
+            kb_id: 知识库ID
+            file_name: 文件名
+            file_content: 文件内容
+            file_type: 文件类型
+            
+        Returns:
+            上传结果
+        """
+        try:
+            # 准备文件数据
+            if isinstance(file_content, str):
+                file_content = file_content.encode('utf-8')
+            
+            files = {
+                'file': (file_name, io.BytesIO(file_content), 'text/plain')
+            }
+            
+            data = {
+                'knowledge_base_id': kb_id,
+                'file_type': file_type
+            }
+            
+            result = self._make_request('POST', f'knowledge_bases/{kb_id}/documents', 
+                                      files=files, params=data)
+            logger.info(f"成功上传文档到RAGFlow: {file_name}")
+            return result
+        except Exception as e:
+            logger.error(f"上传文档到RAGFlow失败: {e}")
+            raise
+    
+    def delete_document(self, kb_id: str, doc_id: str) -> bool:
+        """删除文档"""
+        try:
+            self._make_request('DELETE', f'knowledge_bases/{kb_id}/documents/{doc_id}')
+            logger.info(f"成功从RAGFlow删除文档: {doc_id}")
+            return True
+        except Exception as e:
+            logger.error(f"从RAGFlow删除文档失败: {e}")
+            return False
+    
+    def get_document_status(self, kb_id: str, doc_id: str) -> Dict:
+        """获取文档处理状态"""
+        try:
+            return self._make_request('GET', f'knowledge_bases/{kb_id}/documents/{doc_id}/status')
+        except Exception as e:
+            logger.error(f"获取文档状态失败: {e}")
+            return {"status": "unknown", "error": str(e)}
+    
+    def search_knowledge_base(self, kb_id: str, query: str, top_k: int = 10,
+                            similarity_threshold: float = 0.1) -> Dict:
+        """
+        搜索知识库
+        
+        Args:
+            kb_id: 知识库ID
+            query: 查询文本
+            top_k: 返回结果数量
+            similarity_threshold: 相似度阈值
+            
+        Returns:
+            搜索结果
+        """
+        data = {
+            "query": query,
+            "top_k": top_k,
+            "similarity_threshold": similarity_threshold
+        }
+        
+        try:
+            return self._make_request('POST', f'knowledge_bases/{kb_id}/search', data=data)
+        except Exception as e:
+            logger.error(f"搜索知识库失败: {e}")
+            return {"chunks": [], "total": 0}
+    
+    def get_retrieval_result(self, kb_id: str, query: str, top_k: int = 5) -> List[Dict]:
+        """
+        获取检索结果
+        
+        Args:
+            kb_id: 知识库ID
+            query: 查询文本
+            top_k: 返回结果数量
+            
+        Returns:
+            检索结果列表
+        """
+        try:
+            result = self.search_knowledge_base(kb_id, query, top_k)
+            return result.get('chunks', [])
+        except Exception as e:
+            logger.error(f"获取检索结果失败: {e}")
+            return []
+    
+    def create_chat_session(self, kb_ids: List[str], model_name: str = "deepseek-chat") -> Dict:
+        """
+        创建聊天会话
+        
+        Args:
+            kb_ids: 知识库ID列表
+            model_name: 模型名称
+            
+        Returns:
+            会话信息
+        """
+        data = {
+            "knowledge_base_ids": kb_ids,
+            "model_name": model_name,
+            "temperature": 0.1,
+            "top_p": 0.3,
+            "max_tokens": 512
+        }
+        
+        try:
+            return self._make_request('POST', 'chat/sessions', data=data)
+        except Exception as e:
+            logger.error(f"创建聊天会话失败: {e}")
+            raise
+    
+    def chat(self, session_id: str, query: str, stream: bool = False) -> Dict:
+        """
+        进行对话
+        
+        Args:
+            session_id: 会话ID
+            query: 查询文本
+            stream: 是否流式返回
+            
+        Returns:
+            对话结果
+        """
+        data = {
+            "query": query,
+            "stream": stream
+        }
+        
+        try:
+            return self._make_request('POST', f'chat/sessions/{session_id}/messages', data=data)
+        except Exception as e:
+            logger.error(f"对话失败: {e}")
+            raise
+    
+    def get_statistics(self, kb_id: str) -> Dict:
+        """获取知识库统计信息"""
+        try:
+            return self._make_request('GET', f'knowledge_bases/{kb_id}/statistics')
+        except Exception as e:
+            logger.error(f"获取统计信息失败: {e}")
+            return {}
+
+
+# 创建全局客户端实例
+ragflow_client = RAGFlowClient() 
