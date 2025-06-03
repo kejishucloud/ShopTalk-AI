@@ -12,7 +12,6 @@ from .douyin import DouyinAdapter
 
 logger = logging.getLogger(__name__)
 
-
 class PlatformAdapterFactory:
     """平台适配器工厂"""
     
