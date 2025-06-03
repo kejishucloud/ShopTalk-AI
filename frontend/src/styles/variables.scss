@@ -1,0 +1,70 @@
+// 主色调 - 科技蓝
+$primary-color: #1890ff;
+$primary-light: #40a9ff;
+$primary-dark: #096dd9;
+
+// 辅助色 - 紫色渐变
+$secondary-color: #722ed1;
+$secondary-light: #9254de;
+$secondary-dark: #531dab;
+
+// 背景色 - 深色主题
+$bg-primary: #0f1419;
+$bg-secondary: #1a1f2e;
+$bg-tertiary: #252b3a;
+$bg-card: #2a3142;
+
+// 文字颜色
+$text-primary: #ffffff;
+$text-secondary: #b4b4b4;
+$text-tertiary: #8c8c8c;
+$text-placeholder: #666666;
+
+// 边框颜色
+$border-primary: #404040;
+$border-secondary: #333333;
+$border-light: #262626;
+
+// 成功、警告、错误色
+$success-color: #52c41a;
+$warning-color: #faad14;
+$error-color: #ff4d4f;
+$info-color: #1890ff;
+
+// 阴影
+$shadow-light: 0 2px 8px rgba(0, 0, 0, 0.1);
+$shadow-medium: 0 4px 16px rgba(0, 0, 0, 0.2);
+$shadow-heavy: 0 8px 32px rgba(0, 0, 0, 0.3);
+
+// 渐变背景
+$gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+$gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+$gradient-tech: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+
+// 圆角
+$border-radius-small: 4px;
+$border-radius-medium: 8px;
+$border-radius-large: 12px;
+$border-radius-xl: 16px;
+
+// 间距
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+$spacing-xxl: 48px;
+
+// 字体大小
+$font-size-xs: 12px;
+$font-size-sm: 14px;
+$font-size-md: 16px;
+$font-size-lg: 18px;
+$font-size-xl: 20px;
+$font-size-xxl: 24px;
+
+// Z-index层级
+$z-header: 1000;
+$z-sidebar: 999;
+$z-modal: 2000;
+$z-notification: 3000; 
