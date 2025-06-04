@@ -1,2 +1,4 @@
 /backend/.env
 /.env
+/backend/logs/django.log
+/configs/configs.yaml
