@@ -31,5 +31,5 @@ router.register(r'access-records', KnowledgeAccessRecordViewSet, basename='acces
 router.register(r'recommendations', KnowledgeRecommendationViewSet, basename='recommendation')
 
 urlpatterns = [
-    path('api/v1/knowledge/', include(router.urls)),
+    path('', include(router.urls)),
 ] 

@@ -4,7 +4,7 @@ AI模型管理数据模型
 """
 
 from django.db import models
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 import json
 from decimal import Decimal
@@ -108,7 +108,7 @@ class AIModel(models.Model):
     rate_limit_tpm = models.IntegerField(default=40000, verbose_name='每分钟Token限制')
     daily_quota = models.IntegerField(default=0, verbose_name='每日配额(0=无限制)')
     
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -146,7 +146,7 @@ class ModelCallRecord(models.Model):
     
     model = models.ForeignKey(AIModel, on_delete=models.CASCADE, verbose_name='使用模型')
     session_id = models.CharField(max_length=100, blank=True, verbose_name='会话ID')
-    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='调用用户')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='调用用户')
     
     # 请求参数
     input_text = models.TextField(verbose_name='输入文本')
@@ -251,7 +251,7 @@ class ModelLoadBalancer(models.Model):
     
     name = models.CharField(max_length=100, verbose_name='负载均衡名称')
     strategy = models.CharField(max_length=20, choices=BALANCE_STRATEGIES, default='round_robin', verbose_name='均衡策略')
-    models = models.ManyToManyField(AIModel, through='ModelWeight', verbose_name='参与模型')
+    ai_models = models.ManyToManyField(AIModel, through='ModelWeight', verbose_name='参与模型')
     
     # 故障转移配置
     enable_fallback = models.BooleanField(default=True, verbose_name='启用故障转移')
@@ -263,7 +263,7 @@ class ModelLoadBalancer(models.Model):
     health_check_interval = models.IntegerField(default=60, verbose_name='健康检查间隔(秒)')
     
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -304,7 +304,7 @@ class ModelQuota(models.Model):
     ]
     
     model = models.ForeignKey(AIModel, on_delete=models.CASCADE, verbose_name='模型')
-    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, verbose_name='用户')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True, verbose_name='用户')
     quota_type = models.CharField(max_length=10, choices=QUOTA_TYPES, verbose_name='配额类型')
     
     # 配额限制

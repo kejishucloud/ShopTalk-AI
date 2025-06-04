@@ -26,7 +26,8 @@ from .services import (
     JingdongService, PinduoduoService, WebChatService
 )
 from apps.chatbot.services import MessageProcessorService
-from apps.history.models import ChatSession, ChatMessage
+from apps.chatbot.models import ChatSession
+from apps.history.models import ChatMessage
 
 logger = logging.getLogger('applications')
 

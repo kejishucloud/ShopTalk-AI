@@ -1,0 +1,157 @@
+version: '3.8'
+
+services:
+  # ========== PostgreSQL 数据库服务 ==========
+  db:
+    image: postgres:15-alpine
+    container_name: shoptalk-db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - /home/liyi/kejishu/ShopTalk-AI/data/postgres:/var/lib/postgresql/data
+
+  # ========== Redis 缓存 & Celery Broker/Backend ==========
+  redis:
+    image: redis:7-alpine
+    container_name: shoptalk-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - /home/liyi/kejishu/ShopTalk-AI/data/redis:/data
+
+  # ========== MinIO 对象存储服务 ==========
+  minio:
+    image: minio/minio:latest
+    container_name: shoptalk-minio
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"    # MinIO API 端口
+      - "9001:9001"    # MinIO 控制台端口（默认 9001）
+    command: server /data --console-address ":9001"
+    volumes:
+      - /home/liyi/kejishu/ShopTalk-AI/data/minio:/data
+
+  # ========== Django Web 服务 ==========
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shoptalk-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+      - minio
+      - ragflow
+      - langflow
+    ports:
+      - "8000:8000"
+    volumes:
+      # 将项目源码挂载进容器，以便开发时热加载
+      - .:/app
+      # 挂载日志目录
+      - /home/liyi/kejishu/ShopTalk-AI/data/logs:/app/logs
+    command: >
+      sh -c "
+        # 等待 db、redis、minio 三个服务就绪
+        python3 /app/backend/core/wait_for_services.py db 5432 redis 6379 minio 9000 &&
+        # 迁移、收集静态文件（静态文件会上传到 MinIO）
+        python3 /app/manage.py migrate --noinput &&
+        python3 /app/manage.py collectstatic --noinput &&
+        # 启动 Gunicorn
+        gunicorn backend.core.wsgi:application
+          --bind 0.0.0.0:8000
+          --workers 3
+      "
+
+  # ========== Celery Worker 服务 ==========
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shoptalk-celery
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - web
+      - redis
+      - db
+      - minio
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+        python3 /app/backend/core/wait_for_services.py db 5432 redis 6379 minio 9000 &&
+        celery -A backend.core.celery_app worker
+          --loglevel=info
+          --concurrency=3
+      "
+
+  # ========== Celery Beat（定时任务调度） ==========
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shoptalk-beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      - web
+      - redis
+      - db
+      - minio
+    volumes:
+      - .:/app
+    command: >
+      sh -c "
+        python3 /app/backend/core/wait_for_services.py db 5432 redis 6379 minio 9000 &&
+        celery -A backend.core.celery_app beat
+          --loglevel=info
+          --scheduler django_celery_beat.schedulers:DatabaseScheduler
+      "
+
+  # ========== RAGFlow 服务 ==========
+  ragflow:
+    image: ragflow/ragflow:latest
+    container_name: shoptalk-ragflow
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RAGFLOW_API_KEY: ${RAGFLOW_API_KEY}
+    ports:
+      - "9380:9380"
+    volumes:
+      - /home/liyi/kejishu/ShopTalk-AI/data/ragflow:/data
+
+  # ========== Langflow 服务 ==========
+  langflow:
+    image: langflowai/langflow:latest
+    container_name: shoptalk-langflow
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      LANGFLOW_API_KEY: ${LANGFLOW_API_KEY}
+    ports:
+      - "7860:7860"
+    volumes:
+      - /home/liyi/kejishu/ShopTalk-AI/data/langflow:/app

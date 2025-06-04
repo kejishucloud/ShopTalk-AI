@@ -46,6 +46,7 @@ LOCAL_APPS = [
     'apps.chatbot',        # 智能客服管理
     'apps.applications',   # 不同应用管理
     'apps.keywords',       # 关键词管理
+    'apps.sentiment',      # 情感分析管理
     'apps.history',        # 历史聊天记录管理
     'apps.ai_models',      # AI模型管理
     'apps.system_config',  # 系统配置管理
@@ -168,6 +169,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # 默认主键类型
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# 自定义用户模型
+AUTH_USER_MODEL = 'users.User'
 
 # REST Framework配置
 REST_FRAMEWORK = {

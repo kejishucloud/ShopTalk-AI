@@ -14,14 +14,22 @@ from django.db.models import Q
 import logging
 import asyncio
 import requests
+import sys
+import os
 from typing import Dict, Any
+from datetime import timedelta
+from django.shortcuts import render
+from django.core.cache import cache
 
 from .models import Agent, AgentConfig, AgentExecution, AgentLog
 from .serializers import AgentSerializer, AgentConfigSerializer, AgentExecutionSerializer, AgentLogSerializer
 from .services import AgentManagerService
-from agents import AgentManager, TagAgent, SentimentAgent
+
+# Add the parent directory to Python path to import agents module
+sys.path.append(os.path.join(os.path.dirname(__file__), '../../..'))
+from agents import TagAgent, SentimentAgent
+
 from apps.tags.models import TagRule
-from apps.keywords.models import Keyword
 
 logger = logging.getLogger('agents')
 
@@ -163,6 +171,7 @@ class AgentViewSet(viewsets.ModelViewSet):
             
             # 更新智能体统计
             agent.total_executions += 1
+            agent.successful_executions += 1
             agent.last_execution_at = timezone.now()
             agent.save()
             
@@ -186,6 +195,11 @@ class AgentViewSet(viewsets.ModelViewSet):
                 execution.error_message = str(e)
                 execution.completed_at = timezone.now()
                 execution.save()
+                
+                # 更新失败统计
+                agent.total_executions += 1
+                agent.failed_executions += 1
+                agent.save()
             
             return Response({
                 'error': '消息处理失败',
@@ -199,155 +213,133 @@ class AgentViewSet(viewsets.ModelViewSet):
             from apps.tags.services import TagMatchingService
             
             service = TagMatchingService()
-            intent = service.extract_intent(message)  # 智能体提取意图
+            matched_rules = service.match_text(message)
             
-            # 调用标签模块API获取规则
-            url = f"/api/v1/tags/rules/by_intent/?intent={intent}"
-            # 这里应该使用内部API调用，示例中简化处理
-            rules = TagRule.objects.filter(
-                rule_type='intent',
-                conditions__intent=intent,
-                is_active=True
-            )
-            
-            return {
-                'intent': intent,
-                'matched_rules': [
-                    {
-                        'rule_id': rule.id,
-                        'rule_name': rule.name,
-                        'target_tags': [tag.name for tag in rule.target_tags.all()]
-                    }
-                    for rule in rules
-                ],
-                'count': rules.count()
-            }
-            
+            if matched_rules:
+                # 取置信度最高的规则作为主要意图
+                top_rule, confidence = matched_rules[0]
+                return {
+                    'intent': top_rule.name,
+                    'confidence': confidence,
+                    'rule_id': top_rule.id,
+                    'matched_rules_count': len(matched_rules)
+                }
+            else:
+                return {
+                    'intent': 'unknown',
+                    'confidence': 0.0,
+                    'rule_id': None,
+                    'matched_rules_count': 0
+                }
+                
         except Exception as e:
             logger.error(f"获取意图规则失败: {str(e)}")
-            return {'intent': None, 'matched_rules': [], 'count': 0}
+            return {
+                'intent': 'error',
+                'confidence': 0.0,
+                'error': str(e)
+            }
 
     def _check_human_handoff(self, message: str) -> Dict[str, Any]:
         """调用关键词模块检查是否需要人工接入"""
         try:
-            # 示例：智能体调用 GET /api/keywords/check/?text={latest_message}
-            from apps.keywords.services import KeywordMatchingService
+            # 简化实现：检查特定关键词
+            handoff_keywords = ['人工', '客服', '投诉', '退款', '问题']
             
-            service = KeywordMatchingService()
-            result = service.check_human_handoff(message)
+            message_lower = message.lower()
+            matched_keywords = [kw for kw in handoff_keywords if kw in message_lower]
             
             return {
-                'required': result.get('human_handoff_required', False),
-                'matched_keywords': result.get('matched_keywords', []),
-                'confidence': result.get('confidence', 0.0),
-                'reason': result.get('reason', '')
+                'required': len(matched_keywords) > 0,
+                'matched_keywords': matched_keywords,
+                'confidence': 0.8 if matched_keywords else 0.0
             }
             
         except Exception as e:
             logger.error(f"检查人工接入失败: {str(e)}")
-            return {'required': False, 'matched_keywords': [], 'confidence': 0.0}
+            return {
+                'required': False,
+                'error': str(e)
+            }
 
     def _process_with_tag_agent(self, message: str, intent_result: Dict) -> Dict[str, Any]:
         """使用标签智能体处理消息"""
         try:
-            tag_agent = TagAgent("tag_processor")
+            # 创建标签智能体实例
+            tag_agent = TagAgent()
             
-            input_data = {
-                'text': message,
-                'intent': intent_result.get('intent'),
-                'rules': intent_result.get('matched_rules', [])
-            }
-            
-            # 异步调用智能体
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(tag_agent.safe_process(input_data))
-            loop.close()
+            # 处理消息
+            result = tag_agent.process_message(message)
             
             return {
-                'response': '已识别并处理标签',
-                'tags': result.get('data', {}).get('identified_tags', []),
-                'confidence': result.get('data', {}).get('confidence', 1.0)
+                'response': result.get('response', '我理解了您的需求'),
+                'tags': result.get('tags', []),
+                'confidence': result.get('confidence', 0.8),
+                'agent_type': 'tag_agent'
             }
             
         except Exception as e:
             logger.error(f"标签智能体处理失败: {str(e)}")
-            return {'response': '标签处理失败', 'tags': [], 'confidence': 0.0}
+            return {
+                'response': '抱歉，处理您的消息时出现了问题',
+                'tags': [],
+                'confidence': 0.0,
+                'error': str(e)
+            }
 
     def _process_with_sentiment_agent(self, message: str) -> Dict[str, Any]:
         """使用情感分析智能体处理消息"""
         try:
-            sentiment_agent = SentimentAgent("sentiment_analyzer")
+            # 创建情感分析智能体实例
+            sentiment_agent = SentimentAgent()
             
-            input_data = {'text': message}
+            # 分析情感
+            result = sentiment_agent.analyze_sentiment(message)
             
-            # 异步调用智能体
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(sentiment_agent.safe_process(input_data))
-            loop.close()
-            
-            sentiment = result.get('data', {}).get('sentiment', 'neutral')
-            tags = []
-            
-            # 根据情感分析结果生成标签
-            if sentiment == 'negative':
-                tags.append('负面情感')
-            elif sentiment == 'positive':
-                tags.append('正面情感')
+            # 根据情感生成回复
+            sentiment = result.get('sentiment', 'neutral')
+            if sentiment == 'positive':
+                response = '感谢您的积极反馈！'
+            elif sentiment == 'negative':
+                response = '我理解您的困扰，让我来帮助您解决问题。'
+            else:
+                response = '我明白了您的意思。'
             
             return {
-                'response': f'情感分析完成：{sentiment}',
-                'tags': tags,
-                'confidence': result.get('data', {}).get('confidence', 1.0),
-                'sentiment': sentiment
+                'response': response,
+                'sentiment': sentiment,
+                'confidence': result.get('confidence', 0.7),
+                'agent_type': 'sentiment_agent'
             }
             
         except Exception as e:
-            logger.error(f"情感智能体处理失败: {str(e)}")
-            return {'response': '情感分析失败', 'tags': [], 'confidence': 0.0}
+            logger.error(f"情感分析智能体处理失败: {str(e)}")
+            return {
+                'response': '抱歉，处理您的消息时出现了问题',
+                'sentiment': 'unknown',
+                'confidence': 0.0,
+                'error': str(e)
+            }
 
     def _process_with_default_agent(self, message: str) -> Dict[str, Any]:
-        """默认智能体处理"""
+        """使用默认智能体处理消息"""
         return {
-            'response': '消息已接收并处理',
-            'tags': ['已处理'],
-            'confidence': 1.0
+            'response': '您好，我已经收到您的消息，正在为您处理。',
+            'confidence': 0.5,
+            'agent_type': 'default'
         }
 
     def _assign_tags_to_message(self, session_id: str, tags: list):
-        """将识别的标签分配给消息记录"""
+        """为消息分配标签"""
         try:
-            # 示例：调用 POST /api/tags/assignments/assign/
-            from apps.tags.models import Tag, TagAssignment
-            from apps.history.models import ChatMessage
-            from django.contrib.contenttypes.models import ContentType
+            # 这里应该调用标签分配API
+            # 示例：POST /api/tags/assignments/assign/
             
-            # 获取最新的聊天消息
-            message = ChatMessage.objects.filter(session_id=session_id).last()
-            if not message:
-                return
+            # 简化实现：记录日志
+            logger.info(f"为会话 {session_id} 分配标签: {tags}")
             
-            content_type = ContentType.objects.get_for_model(ChatMessage)
-            
-            for tag_name in tags:
-                try:
-                    tag = Tag.objects.filter(name=tag_name, is_active=True).first()
-                    if tag:
-                        TagAssignment.objects.get_or_create(
-                            tag=tag,
-                            content_type=content_type,
-                            object_id=message.id,
-                            defaults={
-                                'assignment_type': 'agent',
-                                'confidence': 0.8
-                            }
-                        )
-                except Exception as e:
-                    logger.error(f"分配标签失败 {tag_name}: {str(e)}")
-                    
         except Exception as e:
-            logger.error(f"标签分配失败: {str(e)}")
+            logger.error(f"分配标签失败: {str(e)}")
 
 
 class AgentConfigViewSet(viewsets.ModelViewSet):

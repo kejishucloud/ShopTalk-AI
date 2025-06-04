@@ -4,7 +4,7 @@
 """
 
 from django.db import models
-from django.contrib.auth.models import User
+from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 import json
@@ -36,7 +36,7 @@ class Tag(models.Model):
     color = models.CharField(max_length=7, default='#6c757d', verbose_name='显示颜色')
     is_system = models.BooleanField(default=False, verbose_name='是否系统标签')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -65,7 +65,7 @@ class TagRule(models.Model):
     target_tags = models.ManyToManyField(Tag, verbose_name='目标标签')
     priority = models.IntegerField(default=0, verbose_name='优先级')
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='创建者')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
 
@@ -115,7 +115,7 @@ class TagAssignment(models.Model):
     assignment_type = models.CharField(max_length=20, choices=ASSIGNMENT_TYPES, default='manual', verbose_name='分配类型')
     confidence = models.FloatField(default=1.0, verbose_name='置信度')
     rule = models.ForeignKey(TagRule, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='触发规则')
-    assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name='分配者')
+    assigned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, verbose_name='分配者')
     assigned_at = models.DateTimeField(auto_now_add=True, verbose_name='分配时间')
 
     class Meta:

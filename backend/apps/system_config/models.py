@@ -1,6 +1,6 @@
 from django.db import models
+from django.conf import settings
 from django.core.validators import validate_email
-from django.contrib.auth.models import User
 import json
 
 
@@ -53,7 +53,7 @@ class SystemConfig(models.Model):
     is_active = models.BooleanField(default=True, verbose_name='是否启用')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='创建者')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='创建者')
 
     class Meta:
         db_table = 'system_configs'

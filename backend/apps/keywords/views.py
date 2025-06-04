@@ -363,7 +363,7 @@ class KeywordMatchViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = KeywordMatchSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['keyword', 'keyword__category', 'keyword__keyword_type']
+    filterset_fields = ['keyword', 'match_type']
     ordering = ['-matched_at']
 
     @action(detail=False, methods=['get'])
