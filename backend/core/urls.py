@@ -53,6 +53,9 @@ urlpatterns = [
         # 系统配置管理模块
         path('system-config/', include('apps.system_config.urls')),
     ])),
+    
+    # 认证相关API（直接映射到用户应用）
+    path('api/', include('apps.users.urls')),
 ]
 
 # 静态文件和媒体文件服务（开发环境）

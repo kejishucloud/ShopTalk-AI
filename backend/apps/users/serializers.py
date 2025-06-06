@@ -52,6 +52,8 @@ class UserLoginSerializer(serializers.Serializer):
     """用户登录序列化器"""
     username = serializers.CharField()
     password = serializers.CharField()
+    captcha = serializers.CharField(required=True, help_text="验证码")
+    remember = serializers.BooleanField(required=False, default=False)
 
 
 class PasswordChangeSerializer(serializers.Serializer):

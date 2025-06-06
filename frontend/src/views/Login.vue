@@ -58,7 +58,7 @@
         <el-form-item>
           <div class="login-options">
             <el-checkbox v-model="loginForm.remember">记住密码</el-checkbox>
-            <el-link type="primary" :underline="false">忘记密码？</el-link>
+            <el-link type="primary" :underline="false" @click="handleForgotPassword">忘记密码？</el-link>
           </div>
         </el-form-item>
         
@@ -144,6 +144,11 @@ const handleLogin = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// 处理忘记密码
+const handleForgotPassword = () => {
+  ElMessage.info('请联系管理员重置密码，或使用测试账号：用户名/密码都是 kejishu')
 }
 
 // 初始化

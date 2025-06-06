@@ -8,7 +8,7 @@ export const login = (data: LoginForm) => {
 
 // 获取用户信息
 export const getUserInfo = () => {
-  return request.get('/auth/user/')
+  return request.get('/auth/user-info/')
 }
 
 // 刷新token
