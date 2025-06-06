@@ -69,6 +69,9 @@ openpyxl>=3.1.0
 python-docx>=1.1.0
 PyPDF2>=3.0.0
 
+# 图像处理
+Pillow>=10.0.0
+
 # 安全和加密
 cryptography>=41.0.0
 PyJWT>=2.8.0
