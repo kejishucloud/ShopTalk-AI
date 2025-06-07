@@ -2,3 +2,4 @@
 /.env
 /backend/logs/django.log
 /configs/configs.yaml
+/frontend/node_modules/

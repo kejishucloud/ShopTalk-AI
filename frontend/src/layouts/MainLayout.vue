@@ -4,7 +4,7 @@
     <el-aside :width="isCollapse ? '64px' : '240px'" class="sidebar">
       <div class="sidebar-header">
         <div class="logo">
-          <img src="/logo.png" alt="ShopTalk AI" v-if="!isCollapse" />
+          <img src="/logo.svg" alt="ShopTalk AI" v-if="!isCollapse" />
           <h1 v-if="!isCollapse" class="logo-text neon-text">ShopTalk AI</h1>
           <el-icon v-else class="logo-icon"><BrushFilled /></el-icon>
         </div>

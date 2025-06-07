@@ -15,7 +15,7 @@ export const useUserStore = defineStore('user', () => {
   const loginAction = async (loginForm: LoginForm) => {
     try {
       const response = await login(loginForm)
-      token.value = response.data.access_token
+      token.value = response.data.data.access_token
       Cookies.set('token', token.value, { expires: 7 })
       await fetchUserInfo()
       return { success: true }
@@ -28,8 +28,8 @@ export const useUserStore = defineStore('user', () => {
   const fetchUserInfo = async () => {
     try {
       const response = await getUserInfo()
-      userInfo.value = response.data.user
-      permissions.value = response.data.permissions || []
+      userInfo.value = response.data.data.user
+      permissions.value = response.data.data.permissions || []
     } catch (error) {
       console.error('获取用户信息失败:', error)
     }
